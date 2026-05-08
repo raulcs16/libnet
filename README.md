@@ -14,7 +14,7 @@
     - [Campus LAN Design](#campus-lan-design)
     - [Computers, Servers and Nodes](#computers-servers-and-nodes)
   - [Phase 0: Bringing up the Network](#phase-0-bringing-up-the-network)
-  - [Phase 1](#phase-1)
+  - [Phase 1 Windows Server 2025](#phase-1-windows-server-2025)
   - [Phase 2](#phase-2)
   - [Phase 3](#phase-3)
   - [Phase 4](#phase-4)
@@ -101,10 +101,32 @@ then in order to grant various levels of access within the domain we have the fo
 
 The LAN topology that best suits the needs of this virtual library is a campus lan design. A pair of redundant edge routers will serve as the gateway to the WAN provide by ISPs. Next connected these will be a pair of switches serving as the core and distribution (CD) layer in the topology. Finally from the CD switches there will be 4 access switches, where 1 of the access switches will serve as our Service and Management switch in order to provide administrators and services a path into the network.
 
-| Subnet           | use case            |
-|------------------|---------------------|
-| 172.16.255.x/32  | Loopback (Managment)|
-| 192.168.vlan.x/24| Campus Vlan        |
+|VLAN | Description     | Address Assigned |
+|-----|-----------------|------------------|
+| 10  | IB Management   | 192.168.10.0/24  |
+| 100 | Network Services| 192.168.100.0/24 |
+| 20  | Staff / Admin   | 192.168.20.0/24  |
+| 30  | Library Catalog | 192.168.30.0/24  |
+| 40  | Computer Lab    | 192.168.40.0/24  |
+| 50  | Guest Wifi      | 192.168.50.0/24  |
+
+| Network Location | Address Assigned | VLANs | host capacity |
+|------------------|------------------|-------|---------------|
+| R1  Loopback     | 172.16.1.1/32    |       |   1           |
+| R2  Loopback     | 172.16.1.2/32    |       |   1           |
+| CD1 Loopback     | 172.16.1.3/32    |       |   1           |
+| CD2 Loopback     | 172.16.1.4/32    |       |   1           |
+| R1 -- CD1        | 172.16.2.0/30    |       |   2 (.1,.2)   |
+| R1 -- CD2        | 172.16.2.4/30    |       |   2 (.5,.6)   |
+| R2 -- CD1        | 172.16.2.8/30    |       |   2 (.9,.10)  |
+| R2 -- CD2        | 172.16.2.12/30   |       |   2 (.13,.14) |
+| CD1 -- CD2       | 172.16.2.16/30   |       |   2 (.17,.18) |
+
+| Network     | Subnet     | Wildcard   |
+|-------------|------------|------------|
+| Loopback    | 172.16.1.0 | 0.0.0.7    |
+| Transient   | 172.16.2.0 | 0.0.0.31   |
+| Data        | 192.168.0.0| 0.0.255.255|
 
 ### Computers, Servers and Nodes
 
@@ -120,15 +142,15 @@ The LAN topology that best suits the needs of this virtual library is a campus l
 (config-if)# ip address dhcp
 //>10.0.0.114 mask 255.255.255.0
 (config)# int loopback 0
-(config-if)# ip address [172.16.255.1] 255.255.255.255
+(config-if)# ip address [172.16.1.1] 255.255.255.255
 (config-if)# no shutdown
 
 //inteface connected to cd1
-(config-if)# ip adddress [192.168.10.1] 255.255.255.0
+(config-if)# ip adddress [172.16.2.1] 255.255.255.252
 (config-if)# no shutdown
 
-//route to d1
-(config)# ip route 192.168.0.0 255.255.0.0 [ip cd1= 192.168.10.11]
+//route to data network
+(config)# ip route 192.168.0.0 255.255.0.0 [ip cd1= 172.16.2.2]
 ```
 
 ```js ios cd1 config
@@ -136,14 +158,14 @@ The LAN topology that best suits the needs of this virtual library is a campus l
 (config)# ip routing
 //interface facing r1
 (config-if)# no switchport 
-(config-if)# ip address [192.168.10.11] 255.255.255.0
+(config-if)# ip address [172.16.2.2] 255.255.255.252
 (config-if)# no shutdown
 
-(config)# ip route 0.0.0.0 0.0.0.0 [r1 ip= 192.168.10.1]
+(config)# ip route 0.0.0.0 0.0.0.0 [r1 ip= 172.16.2.1]
 
 //loopback
 (config)# int loopback 0
-(config-if)# ip address [172.16.255.11] 255.255.255.255
+(config-if)# ip address [172.16.1.3] 255.255.255.255
 (config-if)# no shutdown
 
 ```
@@ -156,32 +178,66 @@ The LAN topology that best suits the needs of this virtual library is a campus l
 (config-if)# int [facing cd switch]
 (config-if)# ip nat inside
 //acl to permit range of ip
-(config)# access-list 1 permit 192.168.10.0 0.0.0.255
+(config)# access-list 1 permit 192.168.0.0 0.0.255.255
 (config)# ip nat inside source list 1 interface e0/0 overload
 ```
 
 - step 3: Access Switches Trunks and Access Ports
 
-```js ios  trunk configuration
-(config)# vlan 10
-(config)# name management
-(config)# int vlan 10 
-(config)# ip address [192.168.10.1] 255.255.255.0
+```js ios  CD
+(config)# vlan [id]
+(config)# name [name]
+(config)# int vlan [id] 
+(config)# ip address [192.168.[id].1] 255.255.255.0
+(config)# ip helper-address [dhcp ip = 192.168.100.25]
 (config)# no shutdown
-(config)# int [facing linked switch]
+```
+
+```js ios CD---ACC
+(config)# int [both sides of link]
 (config)# switchport
 (config-if)# switchport trunk encapsulation dot1q
 (config-if)# switchport mode trunk
 ```
 
-```js ios  access port configuration
+```js ios  ACC
+(config)# vlan 10 
+(config)# name management
+(config)# int vlan 10
+(config)# ip address [192.168.10.11] 255.255.255.0
+```
+
+```js ios acc ports
 (config)# int range [interface for end hosts]
 (config-if)# switchport mode access
-(config-if)# swtichport access vlan 1 //for now
+(config-if)# swtichport access vlan [10]
 (config-if)# spanning-tree portfasnt
 ```
 
-## Phase 1
+```js ios verify wan connectivity
+(config)# ping 8.8.8.8 source vlan 10
+```
+
+## Phase 1 Windows Server 2025
+
+Step 1: Provisioning Core Server
+
+1. set name: localDC001
+2. set static ip: 192.168.100.15
+3. set default gateway: 192.168.100.1
+4. Add Roles & Features: ADDS, DNS,DHCP
+5. dcpromo.exe promote this server as Domain Controller
+6. create a new forest :  libnet.com
+7. agree to dns & global catalog
+8. DSRM password
+9. install
+
+Step 2: DHCP Scopes
+
+1. DHCP Manager
+2. Scope: 192.168.vlanID.VLAN_NAME
+3. default gateway: 192.168.vlanId.1 (should exist on CD1)
+4. range: 192.168.vlanId.50 - 192.168.vlanId.254
 
 ## Phase 2
 
